@@ -32,7 +32,7 @@ pipeline {
                             credentialsId: "docker_registry_credentials",
                             usernameVariable: 'DOCKER_USER',
                             passwordVariable: 'DOCKER_PASSWORD')]){
-                        sh 'kubectl create namespace dddd -o yaml --dry-run | kubectl apply -f -'
+                        sh 'kubectl create namespace $KUBECTL_NAMESPACE -o yaml --dry-run | kubectl apply -f -'
                         sh 'kubectl config set-context $(kubectl config current-context) --namespace=$KUBECTL_NAMESPACE'
                         sh '''
                             kubectl create secret docker-registry jenkins-registry \
