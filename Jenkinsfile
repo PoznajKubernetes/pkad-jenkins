@@ -1,0 +1,62 @@
+pipeline {
+    agent none
+    environment {
+        DOCKER_REGISTRY = "poznajkubernetes.azurecr.io"
+        IMAGE_NAME = "pkad_jenkins"
+        IMAGE_TAG = "master_${BUILD_ID}"
+        CI_APP_NAME = "pkad-jenkins"
+        KUBECTL_NAMESPACE="jenkins-deploy"
+    }
+    stages {
+        stage('build') {
+            agent { node { label 'docker' }}
+            steps{
+                script{
+                    docker.withRegistry("https://${DOCKER_REGISTRY}", 'docker_registry_credentials') {
+                        def customImage = docker.build("${IMAGE_NAME}:${IMAGE_TAG}")
+                        customImage.push()
+                    }
+                }
+            }
+        }
+        stage('List pods') {
+            agent {
+                docker {
+                    image 'poznajkubernetes/kubectl:v1.14'
+                    args '-v /tmp:/tmp --entrypoint='
+                }
+            }
+            steps{
+                withKubeConfig(credentialsId: 'jenkins-kubeconfig', namespace: 'default') {
+                    withCredentials([usernamePassword(
+                            credentialsId: "docker_registry_credentials",
+                            usernameVariable: 'DOCKER_USER',
+                            passwordVariable: 'DOCKER_PASSWORD')]){
+                        sh 'kubectl create namespace dddd -o yaml --dry-run | kubectl apply -f -'
+                        sh 'kubectl config set-context $(kubectl config current-context) --namespace=$KUBECTL_NAMESPACE'
+                        sh '''
+                            kubectl create secret docker-registry jenkins-registry \
+                                --docker-server=$DOCKER_REGISTRY \
+                                --docker-username=$DOCKER_USER \
+                                --docker-password=$DOCKER_PASSWORD \
+                                -o yaml --dry-run | kubectl apply -f -
+                        '''
+
+                        sh 'envsubst < deployment/deployment-template.yaml > deployment/deployment.yaml'
+                        //sh 'cat deployment/deployment.yaml'
+                        sh '''
+                            kubeval --strict deployment/deployment.yaml
+                            kubectl apply -f deployment/deployment.yaml
+                            if ! kubectl rollout status deployment $CI_APP_NAME; then
+                                kubectl rollout undo deployment $CI_APP_NAME;
+                                kubectl rollout status deployment $CI_APP_NAME;
+                                exit 1;
+                            fi
+                            echo 'Rollout completed'
+                        '''
+                    }
+                }
+            }
+        }
+    }
+}
